@@ -7,44 +7,58 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/cilavery/no-school-till-backend/cmd/main.go/utils"
-	"github.com/gorilla/mux"
 )
 
-var client = &http.Client{}
-var baseURL = "https://developers.teachable.com/v1"
-
 type Users struct {
-	Users []user `json:"users"`
-	Meta  meta   `json:"meta"`
+	Users []User `json:"users"`
+	Meta  Meta   `json:"meta"`
+}
+
+type User struct {
+	ID    int    `json:"id"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
 }
 
 type Courses struct {
-	Courses []struct {
-		ID          int    `json:"id"`
-		Description any    `json:"description"`
-		Name        string `json:"name"`
-		Heading     string `json:"heading"`
-		IsPublished bool   `json:"is_published"`
-		ImageURL    string `json:"image_url"`
-	} `json:"courses"`
-	Meta meta `json:"meta"`
+	Courses []Course `json:"courses"`
+	Meta    Meta     `json:"meta"`
+}
+
+type Course struct {
+	ID          int    `json:"id"`
+	Description any    `json:"description"`
+	Name        string `json:"name"`
+	Heading     string `json:"heading"`
+	IsPublished bool   `json:"is_published"`
+	ImageURL    string `json:"image_url"`
 }
 
 type Enrollments struct {
-	Enrollments []struct {
-		UserID          int       `json:"user_id"`
-		EnrolledAt      time.Time `json:"enrolled_at"`
-		CompletedAt     any       `json:"completed_at"`
-		PercentComplete int       `json:"percent_complete"`
-		ExpiresAt       any       `json:"expires_at"`
-	} `json:"enrollments"`
-	Meta meta `json:"meta"`
+	Enrollments []Enrollment `json:"enrollments"`
+	Meta        Meta         `json:"meta"`
 }
 
-type meta struct {
+type Enrollment struct {
+	UserID          int       `json:"user_id"`
+	EnrolledAt      time.Time `json:"enrolled_at"`
+	CompletedAt     any       `json:"completed_at"`
+	PercentComplete int       `json:"percent_complete"`
+	ExpiresAt       any       `json:"expires_at"`
+}
+
+type courseData struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Heading  string `json:"heading"`
+	Enrolled []User `json:"enrolled"`
+}
+
+type Meta struct {
 	Total         int `json:"total"`
 	Page          int `json:"page"`
 	From          int `json:"from"`
@@ -53,145 +67,172 @@ type meta struct {
 	NumberOfPages int `json:"number_of_pages"`
 }
 
-type user struct {
-	ID    int    `json:"id"`
-	Email string `json:"email"`
-	Name  string `json:"name"`
-}
-
 type Controller struct{}
 
-// With time would refactor to use an interface so Courses and Users would both have the same interface
+var client = &http.Client{}
+var baseURL = "https://developers.teachable.com/v1"
+var allStudents = make(map[int]User)
+var allCourses = make(map[int]Course)
 
 func NewController() *Controller {
 	return &Controller{}
 }
 
-var allStudents = make(map[int]user)
+// fetches all users in a school from Teachable API /users endpoint
+func (c *Controller) fetchAllUsers() (map[int]User, error) {
+	url := fmt.Sprintf("%s/users", baseURL)
 
-func (c *Controller) GetAllUsers() http.HandlerFunc {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Println(err)
+	}
+
+	setHeaders(req)
+
+	res, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+	}
+
+	defer res.Body.Close()
+
+	responseBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Println(err)
+	}
+
+	var users Users
+
+	if err = json.Unmarshal(responseBody, &users); err != nil {
+		// TODO: log error
+		return nil, err
+	}
+
+	// store all users in-memory by user id
+	for _, u := range users.Users {
+		var student User
+		student.Name = u.Name
+		student.Email = u.Email
+		allStudents[u.ID] = student
+	}
+	return allStudents, nil
+}
+
+// fetches all courses in a school from Teachable API /courses endpoint
+func (controller *Controller) fetchAllCourses() (map[int]Course, error) {
+	url := fmt.Sprintf("%s/courses", baseURL)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Println(err)
+	}
+
+	setHeaders(req)
+
+	res, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+	}
+
+	defer res.Body.Close()
+
+	responseBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Println(err)
+	}
+
+	var courses Courses
+
+	if err = json.Unmarshal(responseBody, &courses); err != nil {
+		// TODO: log error
+		return nil, err
+	}
+
+	// store all courses in-memory by course id
+	for _, c := range courses.Courses {
+		allCourses[c.ID] = c
+	}
+
+	return allCourses, nil
+}
+
+// fetches all active enrollments by course id from Teachable API /courses/{course_id}/enrollments endpoint
+func (controller *Controller) fetchCourseEnrollments(courseID int) ([]User, error) {
+	url := fmt.Sprintf("%s/courses/%v/enrollments", baseURL, courseID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Println(err)
+	}
+
+	setHeaders(req)
+
+	res, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+	}
+
+	defer res.Body.Close()
+
+	responseBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Println(err)
+	}
+
+	var enrollments Enrollments
+
+	if err = json.Unmarshal(responseBody, &enrollments); err != nil {
+		// TODO: log error
+		return nil, err
+	}
+
+	enrolledStudents := []User{}
+
+	for _, enrolled := range enrollments.Enrollments {
+		studentData := allStudents[enrolled.UserID]
+		studentData.ID = enrolled.UserID
+		enrolledStudents = append(enrolledStudents, studentData)
+	}
+	return enrolledStudents, nil
+}
+
+func (controller *Controller) GetCourseInfo() http.HandlerFunc {
+	controller.fetchAllCourses()
+	controller.fetchAllUsers()
+
 	return func(w http.ResponseWriter, r *http.Request) {
-		url := fmt.Sprintf("%s/users", baseURL)
-
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			log.Println(err)
-		}
-
-		setHeaders(req)
-
-		res, err := client.Do(req)
-		if err != nil {
-			log.Println(err)
-		}
-
-		defer res.Body.Close()
-
-		responseBody, err := io.ReadAll(res.Body)
-		if err != nil {
-			log.Println(err)
-		}
-
-		var users Users
-
-		if err = json.Unmarshal(responseBody, &users); err != nil {
-			// TODO: handle by response status codes and send
-			// proper error statuses
-			utils.SendError(w, http.StatusBadRequest, utils.Error{Message: "response error"})
-			return
-		}
-
-		for _, u := range users.Users {
-			// check if user_id exists in the student map, if not then add it
-			if _, ok := allStudents[u.ID]; !ok {
-				var student user
-				student.Name = u.Name
-				student.Email = u.Email
-				allStudents[u.ID] = student
-			}
-		}
+		// map through each course, and fetch enrolled students by course id.
+		// return a list of each published course with course name, heading and enrolled students
+		coursesData := controller.getEnrollmentsByCourse()
+		utils.SendSuccess(w, coursesData)
 	}
 }
 
-func (c *Controller) GetAllCourses() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		url := fmt.Sprintf("%s/courses", baseURL)
+func (controller *Controller) getEnrollmentsByCourse() []courseData {
+	wg := sync.WaitGroup{}
 
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			log.Println(err)
+	var coursesData []courseData
+
+	for _, c := range allCourses {
+		if c.IsPublished {
+			wg.Add(1)
+			go func(course Course) {
+				enrollments, err := controller.fetchCourseEnrollments(course.ID)
+				if err != nil {
+					return
+				}
+				var data courseData
+				data.ID = course.ID
+				data.Name = course.Name
+				data.Heading = course.Heading
+				data.Enrolled = enrollments
+
+				coursesData = append(coursesData, data)
+				wg.Done()
+			}(c)
 		}
-
-		setHeaders(req)
-
-		res, err := client.Do(req)
-		if err != nil {
-			log.Println(err)
-		}
-
-		defer res.Body.Close()
-
-		responseBody, err := io.ReadAll(res.Body)
-		if err != nil {
-			log.Println(err)
-		}
-
-		var courses Courses
-
-		if err = json.Unmarshal(responseBody, &courses); err != nil {
-			// TODO: handle by response status codes and send
-			// proper error statuses
-			utils.SendError(w, http.StatusBadRequest, utils.Error{Message: "response error"})
-			return
-		}
-
-		utils.SendSuccess(w, courses)
 	}
-}
-
-func (c *Controller) GetAllEnrollments() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		params := mux.Vars(r)
-		id := params["course_id"]
-		url := fmt.Sprintf("%s/courses/%s/enrollments", baseURL, id)
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			log.Println(err)
-		}
-
-		setHeaders(req)
-
-		res, err := client.Do(req)
-		if err != nil {
-			log.Println(err)
-		}
-
-		defer res.Body.Close()
-
-		responseBody, err := io.ReadAll(res.Body)
-		if err != nil {
-			log.Println(err)
-		}
-
-		var enrollments Enrollments
-
-		if err = json.Unmarshal(responseBody, &enrollments); err != nil {
-			// TODO: handle by response status codes and send
-			// proper error statuses
-			utils.SendError(w, http.StatusBadRequest, utils.Error{Message: "response error"})
-			return
-		}
-
-		enrolledStudents := []user{}
-		// doesn't handle if a user_id doesn't exist in the students map
-		for _, enrolled := range enrollments.Enrollments {
-			studentData := allStudents[enrolled.UserID]
-			studentData.ID = enrolled.UserID
-			enrolledStudents = append(enrolledStudents, studentData)
-		}
-
-		utils.SendSuccess(w, enrolledStudents)
-	}
+	wg.Wait()
+	return coursesData
 }
 
 func setHeaders(r *http.Request) *http.Request {

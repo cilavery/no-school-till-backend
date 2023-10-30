@@ -11,13 +11,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
-func logFatal(err error) {
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-// should load different vars based off of environment i.e. dev, prod
+// TODO: load different vars based off of environment i.e. dev, prod
 func loadEnv() {
 	err := godotenv.Load(".env")
 	if err != nil {
@@ -31,9 +25,7 @@ func main() {
 
 	controller := internal.NewController()
 	r := mux.NewRouter()
-	r.HandleFunc("/", controller.GetAllUsers())
-	r.HandleFunc("/courses", controller.GetAllCourses())
-	r.HandleFunc("/courses/{course_id}/enrollments", controller.GetAllEnrollments())
+	r.HandleFunc("/courses", controller.GetCourseInfo())
 	fmt.Println("Server is listening on PORT 8080")
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
