@@ -202,12 +202,12 @@ func (controller *Controller) GetCourseInfo() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// map through each course, and fetch enrolled students by course id.
 		// return a list of each published course with course name, heading and enrolled students
-		coursesData := controller.getEnrollmentsByCourse()
+		coursesData := controller.fetchEnrollmentsByCourse()
 		utils.SendSuccess(w, coursesData)
 	}
 }
 
-func (controller *Controller) getEnrollmentsByCourse() []courseData {
+func (controller *Controller) fetchEnrollmentsByCourse() []courseData {
 	wg := sync.WaitGroup{}
 
 	var coursesData []courseData
